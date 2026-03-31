@@ -5,12 +5,13 @@ const cron = require('node-cron');
 const path = require('path');
 
 const TOKEN = '8754716546:AAHkFMWqdPf2qi0axCTa8XSkqWtVZzghhZM';
-const ADMINS = [65002404]; // Rahbariyat va Admin ID lari
+const ADMINS = [65002404]; 
 const bot = new Telegraf(TOKEN);
 
 const WORK_START = "09:00"; 
 const WORK_END = "18:00";   
-const LOGO_PATH = path.join(__dirname, '..', '..', 'brain', '345f0ac7-01bd-4ebb-9289-a753f5f34c1d', 'hr_bot_official_new_circular_logo_v4_1774967084272.png');
+// LOGO PATH - GitHub repartiga 'logo.png' deb yuklang
+const LOGO_PATH = path.join(__dirname, 'logo.png');
 
 const DB_PATH = './db.json';
 const STAFF_LIST = [
@@ -50,7 +51,7 @@ const STAFF_LIST = [
     { id: 34, name: "Ergasheva Dildora Madaminovna", dept: "Maktabgacha ta'lim" },
     { id: 35, name: "Sultonov Oybek Maxammatjonovich", dept: "Maktabgacha ta'lim" },
     { id: 36, name: "Obidova Gulmiraxon", dept: "Maktabgacha ta'lim" },
-    { id: 37, name: "Utamboyeva Muxabbat Abduxalimovna", dept: "Pedagog kadrlar" },
+    { id: 37, name: "Utamboyeva Muxabbat Abduxalimovna", dept: "Pedagog kadr kadrlar" },
     { id: 38, name: "Sultonova Xolida Basirovna", dept: "Pedagog kadrlar" },
     { id: 39, name: "Xadiyatullayev Qaxramon Adxamovich", dept: "Litsenziyalash" },
     { id: 40, name: "Ortiqov Asilbek Akramjon o'g'li", dept: "Akkreditatsiyalash" },
@@ -134,12 +135,10 @@ const locationScene = new Scenes.WizardScene('LOC_SCENE',
     (ctx) => {
         if (ctx.message.text === "🏠 Bekor qilish") { showMenu(ctx); return ctx.scene.leave(); }
         if (!ctx.message.location) return ctx.reply("Iltimos, faqat lokatsiya tugmasini bosing.");
-        
         const type = ctx.wizard.state.type;
         const now = moment().tz("Asia/Tashkent");
         const date = now.format("YYYY-MM-DD");
         const timeNow = now.format("HH:mm");
-
         if (isHoliday(now)) { showMenu(ctx, false, "😴 Dam olish kunida davomat olinmaydi."); return ctx.scene.leave(); }
         const dist = getDistance(ctx.message.location.latitude, ctx.message.location.longitude, db.settings.lat, db.settings.lon);
         if (dist > db.settings.radius) { showMenu(ctx, false, "⚠️ Masofa xato (Ishxonadan uzoq)"); return ctx.scene.leave(); }
@@ -170,9 +169,7 @@ const hududWizard = new Scenes.WizardScene('HUDUD_SCENE',
         if (ctx.message.text === "🏠 Bosh menyu") { showMenu(ctx); return ctx.scene.leave(); }
         const now = moment().tz("Asia/Tashkent");
         db.logs.push({ uid: ctx.from.id, type: 'special', status: ctx.message.text, date: now.format("YYYY-MM-DD"), time: now.format("HH:mm:ss") });
-        saveDb(); 
-        let header = `✅ <b>${ctx.message.text}</b> qayd etildi.`;
-        showMenu(ctx, false, header);
+        saveDb(); showMenu(ctx, false, `✅ <b>${ctx.message.text}</b> qayd etildi.`);
         return ctx.scene.leave();
     }
 );
@@ -188,8 +185,7 @@ const vacationWizard = new Scenes.WizardScene('VAC_SCENE',
     (ctx) => {
         const user = db.users[ctx.from.id];
         user.vacations.push({ start: ctx.wizard.state.start, end: ctx.message.text, type: ctx.wizard.state.type });
-        saveDb(); 
-        showMenu(ctx, false, `✅ <b>Ta'til qayd etildi!</b>`);
+        saveDb(); showMenu(ctx, false, `✅ <b>Ta'til qayd etildi!</b>`);
         return ctx.scene.leave();
     }
 );
@@ -259,22 +255,18 @@ function getDistance(lat1, lon1, lat2, lon2) {
     return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
 }
 
-// REPORTING ENGINE
 async function generateReport(date) {
     const logs = db.logs.filter(l => l.date === date);
     let msg = `📊 <b>Hisobot (${date}):</b>\n\n`;
-    
     STAFF_LIST.forEach(s => {
         const uid = Object.keys(db.users).find(u => db.users[u].staff_id === s.id);
         const u = db.users[uid];
         const v = u ? u.vacations.find(vac => moment(date).isBetween(moment(vac.start, "DD.MM.YYYY"), moment(vac.end, "DD.MM.YYYY"), 'day', '[]')) : null;
-        
         if (v) msg += `🌴 <b>${s.name}</b>: ${v.type}\n`;
         else {
             const l = logs.find(log => log.uid == uid && log.type === 'kirish');
             const o = logs.find(log => log.uid == uid && log.type === 'chiqish');
             const sp = logs.find(log => log.uid == uid && log.type === 'special');
-            
             if (sp) msg += `📂 <b>${s.name}</b>: ${sp.status}\n`;
             else if (l) {
                 const isLate = l.time > WORK_START;
@@ -289,7 +281,6 @@ async function generateReport(date) {
     return msg;
 }
 
-// 10:00 - Morning Report (Late/On-time/Absent)
 cron.schedule('0 10 * * *', async () => {
     const today = moment().tz("Asia/Tashkent").format("YYYY-MM-DD");
     if (isHoliday(moment())) return;
@@ -297,7 +288,6 @@ cron.schedule('0 10 * * *', async () => {
     ADMINS.forEach(id => bot.telegram.sendMessage(id, msg, { parse_mode: 'HTML' }).catch(() => {}));
 }, { timezone: "Asia/Tashkent" });
 
-// 20:00 - Evening Final Status (Early exit/Still at work)
 cron.schedule('0 20 * * *', async () => {
     const today = moment().tz("Asia/Tashkent").format("YYYY-MM-DD");
     if (isHoliday(moment())) return;
@@ -305,11 +295,10 @@ cron.schedule('0 20 * * *', async () => {
     ADMINS.forEach(id => bot.telegram.sendMessage(id, msg, { parse_mode: 'HTML' }).catch(() => {}));
 }, { timezone: "Asia/Tashkent" });
 
-// 07:00 - General Summary (Yesterday)
 cron.schedule('0 7 * * *', async () => {
     const yesterday = moment().tz("Asia/Tashkent").subtract(1, 'day').format("YYYY-MM-DD");
     const msg = `📑 <b>07:00 - Kechagi kun uchun umumiy hisobot:</b>\n\n` + await generateReport(yesterday);
     ADMINS.forEach(id => bot.telegram.sendMessage(id, msg, { parse_mode: 'HTML' }).catch(() => {}));
 }, { timezone: "Asia/Tashkent" });
 
-bot.launch().then(() => console.log("HR ONLINE WITH SCHEDULED REPORTS"));
+bot.launch().then(() => console.log("HR ONLINE DEPLOYED ON RENDER"));
