@@ -1,0 +1,132 @@
+{
+  "users": {
+    "65002404": {
+      "staff_id": 44,
+      "name": "Turdiyev Rustamjon Raushanovich",
+      "dept": "Tarbiyaviy ishlar"
+    },
+    "5310405293": {
+      "staff_id": 47,
+      "name": "Azimov Abrorjon Maxsudaliyevich",
+      "dept": "Tarbiyaviy ishlar",
+      "vacations": [
+        {
+          "start": "01.04.2026-yil",
+          "end": "02.04.2026",
+          "type": "☀️ Mehnat ta'tili"
+        }
+      ]
+    }
+  },
+  "logs": [
+    {
+      "uid": 65002404,
+      "type": "kirish",
+      "date": "2026-03-31",
+      "time": "18:49:18",
+      "isLate": true
+    },
+    {
+      "uid": 65002404,
+      "type": "kirish",
+      "date": "2026-03-31",
+      "time": "18:53:23",
+      "isLate": true
+    },
+    {
+      "uid": 65002404,
+      "type": "chiqish",
+      "date": "2026-03-31",
+      "time": "18:53:28",
+      "isLate": false
+    },
+    {
+      "uid": 65002404,
+      "type": "chiqish",
+      "date": "2026-03-31",
+      "time": "18:53:44",
+      "isLate": false
+    },
+    {
+      "uid": 65002404,
+      "type": "kirish",
+      "date": "2026-03-31",
+      "time": "19:00:09",
+      "isLate": true
+    },
+    {
+      "uid": 65002404,
+      "type": "chiqish",
+      "date": "2026-03-31",
+      "time": "19:00:19",
+      "isLate": false
+    },
+    {
+      "uid": 65002404,
+      "type": "kirish",
+      "date": "2026-03-31",
+      "time": "19:44:28"
+    },
+    {
+      "uid": 65002404,
+      "type": "chiqish",
+      "date": "2026-03-31",
+      "time": "19:44:38"
+    },
+    {
+      "uid": 65002404,
+      "type": "kirish",
+      "date": "2026-03-31",
+      "time": "19:47:16"
+    },
+    {
+      "uid": 65002404,
+      "type": "chiqish",
+      "date": "2026-03-31",
+      "time": "19:47:20"
+    },
+    {
+      "uid": 65002404,
+      "type": "kirish",
+      "date": "2026-03-31",
+      "time": "19:47:45"
+    },
+    {
+      "uid": 65002404,
+      "type": "chiqish",
+      "date": "2026-03-31",
+      "time": "19:47:49"
+    },
+    {
+      "uid": 65002404,
+      "type": "chiqish",
+      "date": "2026-03-31",
+      "time": "19:50:56"
+    },
+    {
+      "uid": 5310405293,
+      "type": "kirish",
+      "date": "2026-03-31",
+      "time": "19:53:38"
+    },
+    {
+      "uid": 5310405293,
+      "type": "chiqish",
+      "date": "2026-03-31",
+      "time": "19:54:11"
+    },
+    {
+      "uid": 5310405293,
+      "type": "special",
+      "status": "📄 O'rganish (Taqdimnoma)",
+      "date": "2026-03-31",
+      "time": "19:54:49"
+    }
+  ],
+  "settings": {
+    "lat": 40.388121,
+    "lon": 71.791453,
+    "radius": 200,
+    "holidays": []
+  }
+}
