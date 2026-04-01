@@ -3,6 +3,18 @@ const fs = require('fs');
 const moment = require('moment-timezone');
 const cron = require('node-cron');
 const path = require('path');
+const http = require('http');
+
+// RENDER HEALTH CHECK SERVER
+const PORT = process.env.PORT || 10000;
+const server = http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    res.end('HR BOT IS ONLINE 24/7\n');
+});
+
+server.listen(PORT, '0.0.0.0', () => {
+    console.log(`Health check server is running on port ${PORT}`);
+});
 
 const TOKEN = '8754716546:AAHkFMWqdPf2qi0axCTa8XSkqWtVZzghhZM';
 const ADMINS = [65002404]; 
@@ -10,7 +22,6 @@ const bot = new Telegraf(TOKEN);
 
 const WORK_START = "09:00"; 
 const WORK_END = "18:00";   
-// LOGO PATH - GitHub repartiga 'logo.png' deb yuklang
 const LOGO_PATH = path.join(__dirname, 'logo.png');
 
 const DB_PATH = './db.json';
@@ -51,7 +62,7 @@ const STAFF_LIST = [
     { id: 34, name: "Ergasheva Dildora Madaminovna", dept: "Maktabgacha ta'lim" },
     { id: 35, name: "Sultonov Oybek Maxammatjonovich", dept: "Maktabgacha ta'lim" },
     { id: 36, name: "Obidova Gulmiraxon", dept: "Maktabgacha ta'lim" },
-    { id: 37, name: "Utamboyeva Muxabbat Abduxalimovna", dept: "Pedagog kadr kadrlar" },
+    { id: 37, name: "Utamboyeva Muxabbat Abduxalimovna", dept: "Pedagog kadrlar" },
     { id: 38, name: "Sultonova Xolida Basirovna", dept: "Pedagog kadrlar" },
     { id: 39, name: "Xadiyatullayev Qaxramon Adxamovich", dept: "Litsenziyalash" },
     { id: 40, name: "Ortiqov Asilbek Akramjon o'g'li", dept: "Akkreditatsiyalash" },
@@ -301,4 +312,13 @@ cron.schedule('0 7 * * *', async () => {
     ADMINS.forEach(id => bot.telegram.sendMessage(id, msg, { parse_mode: 'HTML' }).catch(() => {}));
 }, { timezone: "Asia/Tashkent" });
 
-bot.launch().then(() => console.log("HR ONLINE DEPLOYED ON RENDER"));
+bot.launch({ dropPendingUpdates: true })
+    .then(() => console.log("HR BOT IS ONLINE ON RENDER"))
+    .catch((err) => console.error("Bot launch error:", err));
+
+// Enable graceful stop
+process.once('SIGINT', () => bot.stop('SIGINT'));
+process.once('SIGTERM', () => {
+    bot.stop('SIGTERM');
+    server.close();
+});
