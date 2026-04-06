@@ -4,6 +4,7 @@ const moment = require('moment-timezone');
 const cron = require('node-cron');
 const path = require('path');
 const http = require('http');
+const ExcelJS = require('exceljs');
 
 // RENDER HEALTH CHECK & KEEP-ALIVE SERVER
 const PORT = process.env.PORT || 10000;
@@ -16,6 +17,15 @@ const server = http.createServer((req, res) => {
         res.end();
     }
 });
+
+/*
+  "dependencies": {
+    "telegraf": "^4.16.3",
+    "moment-timezone": "^0.5.45",
+    "node-cron": "^3.0.3",
+    "exceljs": "^4.4.0"
+  }
+*/
 
 server.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Health check server is running on port ${PORT}`);
@@ -34,7 +44,7 @@ server.listen(PORT, '0.0.0.0', () => {
 
 const TOKEN = process.env.BOT_TOKEN || '8754716546:AAHkFMWqdPf2qi0axCTa8XSkqWtVZzghhZM';
 // Adminlar ro'yxati (ID'larni raqam va string ko'rinishida tekshirish uchun)
-const ADMINS = [65002404, 786314811, 5310405293]; 
+const ADMINS = [65002404, 786314811, 5310405293, 291508733]; 
 const bot = new Telegraf(TOKEN);
 
 // Adminlikni tekshirish uchun yordamchi funksiya
@@ -127,6 +137,14 @@ if (fs.existsSync(DB_PATH)) {
 }
 function saveDb() { fs.writeFileSync(DB_PATH, JSON.stringify(db, null, 2)); }
 
+// Apostrof va belgilarni normallashtirish (Telegramdagi har xil klaviaturalar uchun)
+function normalizeText(text) {
+    if (!text) return "";
+    return text.toString().toLowerCase()
+        .replace(/[‘'’`ʻ]/g, "'") // Barcha turdagi apostroflarni bittaga o'tkazish
+        .trim();
+}
+
 function isHoliday(date) {
     const d = date.format("DD.MM");
     const full = date.format("DD.MM.YYYY");
@@ -141,19 +159,34 @@ const registerWizard = new Scenes.WizardScene('REG_SCENE',
         return ctx.wizard.next();
     },
     (ctx) => {
-        if (ctx.message.text === "❌ Bekor qilish") return ctx.scene.leave();
-        ctx.wizard.state.dept = ctx.message.text;
-        const names = STAFF_LIST.filter(s => s.dept === ctx.wizard.state.dept).map(s => s.name);
-        if (names.length === 0) return ctx.reply("Xato bo'lim!");
+        const text = ctx.message.text;
+        if (text === "❌ Bekor qilish") return ctx.scene.leave();
+        
+        // Bo'limni qidirishda normalizeText ishlatamiz
+        const foundDept = STAFF_LIST.find(s => normalizeText(s.dept) === normalizeText(text))?.dept;
+        
+        if (!foundDept) return ctx.reply("⚠️ Xato bo'lim! Iltimos, tugmalardan birini tanlang.");
+        
+        ctx.wizard.state.dept = foundDept;
+        const names = STAFF_LIST.filter(s => s.dept === foundDept).map(s => s.name);
         ctx.reply("👤 <b>Ism-sharifingizni tanlang:</b>", { parse_mode: 'HTML', ...Markup.keyboard([...names.map(n => [n]), ["⬅️ Orqaga"]]).resize() });
         return ctx.wizard.next();
     },
     (ctx) => {
-        if (ctx.message.text === "⬅️ Orqaga") return ctx.wizard.back();
-        const staff = STAFF_LIST.find(s => s.name === ctx.message.text);
-        if (!staff) return ctx.reply("Xato ism!");
+        const text = ctx.message.text;
+        if (text === "⬅️ Orqaga") {
+            // Orqaga qaytganda yana 1-qadamni ko'rsatish
+            const depts = [...new Set(STAFF_LIST.map(s => s.dept))];
+            ctx.reply("🏢 <b>Bo'limni qaytadan tanlang:</b>", { parse_mode: 'HTML', ...Markup.keyboard([...depts.map(d => [d]), ["❌ Bekor qilish"]]).resize() });
+            return ctx.wizard.selectStep(1); // 1-qadamga (bo'lim tanlash) qaytish
+        }
+        
+        const staff = STAFF_LIST.find(s => normalizeText(s.name) === normalizeText(text));
+        if (!staff) return ctx.reply("⚠️ Xato ism! Iltimos, ro'yxatdan tanlang.");
+        
         db.users[ctx.from.id] = { staff_id: staff.id, name: staff.name, dept: staff.dept, vacations: [] };
-        saveDb(); showMenu(ctx, false, "🎉 Ro'yxatdan muvaffaqiyatli o'tdingiz!");
+        saveDb(); 
+        showMenu(ctx, false, "🎉 Ro'yxatdan muvaffaqiyatli o'tdingiz!");
         return ctx.scene.leave();
     }
 );
@@ -188,7 +221,15 @@ const locationScene = new Scenes.WizardScene('LOC_SCENE',
             else statusHeader = `🏠 <b>DAM OLISHINGIZ XAYRLI O'TSIN!</b>\n\nBugungi mehnatingiz uchun tashakkur! 😊🌙`;
         }
 
-        db.logs.push({ uid: ctx.from.id, type, date, time: now.format("HH:mm:ss") }); saveDb();
+        db.logs.push({ 
+            uid: ctx.from.id, 
+            type, 
+            date, 
+            time: now.format("HH:mm:ss"),
+            lat: ctx.message.location.latitude,
+            lon: ctx.message.location.longitude
+        }); 
+        saveDb();
         showMenu(ctx, type === 'chiqish', statusHeader);
         return ctx.scene.leave();
     }
@@ -225,7 +266,85 @@ const vacationWizard = new Scenes.WizardScene('VAC_SCENE',
     }
 );
 
-const stage = new Scenes.Stage([registerWizard, vacationWizard, hududWizard, locationScene]);
+// Admin Sozlamalari Sahnesi (Item 4)
+const settingsWizard = new Scenes.WizardScene('SETTINGS_SCENE',
+    (ctx) => {
+        ctx.replyWithHTML("⚙️ <b>Qaysi sozlamani o'zgartirmoqchisiz?</b>\n\nJoriy holat:\n📍 Lat: <code>"+db.settings.lat+"</code>\n📍 Lon: <code>"+db.settings.lon+"</code>\n⭕️ Radius: <code>"+db.settings.radius+"m</code>", 
+            Markup.keyboard([["📍 Ishxonasi lokatsiyasi", "⭕️ Radiusni o'zgartirish"], ["🏠 Admin Panel"]]).resize());
+        return ctx.wizard.next();
+    },
+    async (ctx) => {
+        const text = ctx.message.text;
+        if (text === "🏠 Admin Panel") { return ctx.scene.enter('ADMIN_SCENE'); }
+        if (text === "📍 Ishxonasi lokatsiyasi") {
+            ctx.reply("📍 <b>Yangi lokatsiyani (geolokatsiya) yuboring:</b>", Markup.keyboard([["🏠 Bekor qilish"]]).resize());
+            ctx.wizard.state.mode = 'latlon';
+            return ctx.wizard.next();
+        }
+        if (text === "⭕️ Radiusni o'zgartirish") {
+            ctx.reply("⭕️ <b>Yangi radiusni (metrda) kiriting:</b>\nMasalan: 300", Markup.keyboard([["🏠 Bekor qilish"]]).resize());
+            ctx.wizard.state.mode = 'radius';
+            return ctx.wizard.next();
+        }
+    },
+    async (ctx) => {
+        if (ctx.message.text === "🏠 Bekor qilish") return ctx.scene.leave();
+        if (ctx.wizard.state.mode === 'latlon') {
+            if (!ctx.message.location) return ctx.reply("Iltimos, faqat geolikatsiya yuboring!");
+            db.settings.lat = ctx.message.location.latitude;
+            db.settings.lon = ctx.message.location.longitude;
+            saveDb();
+            ctx.replyWithHTML("✅ <b>Yangi koordinatalar saqlandi!</b>");
+            return ctx.scene.leave();
+        }
+        if (ctx.wizard.state.mode === 'radius') {
+            const rad = parseInt(ctx.message.text);
+            if (isNaN(rad)) return ctx.reply("Iltimos, son kiriting!");
+            db.settings.radius = rad;
+            saveDb();
+            ctx.replyWithHTML("✅ <b>Yangi radius ("+rad+"m) saqlandi!</b>");
+            return ctx.scene.leave();
+        }
+    }
+);
+
+// Xodimni qidirish oynasi (Admin uchun)
+const adminSearchWizard = new Scenes.WizardScene('ADMIN_SEARCH_SCENE',
+    (ctx) => {
+        const depts = [...new Set(STAFF_LIST.map(s => s.dept))];
+        ctx.reply("🏢 <b>Qaysi bo'lim xodimini ko'rmoqchisiz?</b>", { parse_mode: 'HTML', ...Markup.keyboard([...depts.map(d => [d]), ["🏠 Admin Panel"]]).resize() });
+        return ctx.wizard.next();
+    },
+    (ctx) => {
+        if (ctx.message.text === "🏠 Admin Panel") return ctx.scene.enter('ADMIN_SCENE');
+        ctx.wizard.state.dept = ctx.message.text;
+        const names = STAFF_LIST.filter(s => s.dept === ctx.wizard.state.dept).map(s => s.name);
+        if (names.length === 0) return ctx.reply("Xato bo'lim!");
+        ctx.reply("👤 <b>Xodimni tanlang:</b>", { parse_mode: 'HTML', ...Markup.keyboard([...names.map(n => [n]), ["⬅️ Orqaga"]]).resize() });
+        return ctx.wizard.next();
+    },
+    (ctx) => {
+        if (ctx.message.text === "⬅️ Orqaga") return ctx.wizard.back();
+        const staff = STAFF_LIST.find(s => s.name === ctx.message.text);
+        if (!staff) return ctx.reply("Xato ism!");
+
+        const today = moment().tz("Asia/Tashkent").format("YYYY-MM-DD");
+        const uid = Object.keys(db.users).find(u => db.users[u].staff_id === staff.id);
+        const log = db.logs.filter(l => l.uid == uid && l.date === today && l.lat).pop(); // Oxirgi lokatsiya
+
+        if (log) {
+            const mapUrl = `https://www.google.com/maps?q=${log.lat},${log.lon}`;
+            ctx.replyWithHTML(`👤 <b>Xodim:</b> ${staff.name}\n` +
+                `🕒 <b>Oxirgi qayd:</b> ${log.time}\n` +
+                `📍 <b>Lokatsiyasi:</b> <a href="${mapUrl}">Kritada ko'rish</a>`);
+        } else {
+            ctx.replyWithHTML(`👤 <b>Xodim:</b> ${staff.name}\n❌ Bugun hali lokatsiya yubormagan.`);
+        }
+        return ctx.scene.leave();
+    }
+);
+
+const stage = new Scenes.Stage([registerWizard, vacationWizard, hududWizard, locationScene, settingsWizard, adminSearchWizard]);
 bot.use(session());
 bot.use(stage.middleware());
 
@@ -280,8 +399,27 @@ async function showMenu(ctx, isExit = false, statusHeader = "") {
 bot.hears("⚙️ Admin Panel", (ctx) => {
     if (!isAdmin(ctx.from.id)) return;
     ctx.replyWithHTML("👑 <b>Admin Panel</b>\n\nQuyidagi amallardan birini tanlang:", 
-        Markup.keyboard([["📊 Kunlik hisobot (Bugun)", "📑 Kechagi hisobot"], ["🏠 Bosh menyu"]]).resize());
+        Markup.keyboard([["📊 Kunlik hisobot (Bugun)", "📑 Excel hisobat"], ["🔍 Xodimni izlash", "⚙️ Sozlamalar"], ["🏠 Bosh menyu"]]).resize());
 });
+
+bot.hears("🔍 Xodimni izlash", (ctx) => isAdmin(ctx.from.id) && ctx.scene.enter('ADMIN_SEARCH_SCENE'));
+
+bot.hears("📑 Excel hisobat", async (ctx) => {
+    if (!isAdmin(ctx.from.id)) return;
+    const today = moment().tz("Asia/Tashkent").format("YYYY-MM-DD");
+    const filePath = path.join(__dirname, `report_${today}.xlsx`);
+    
+    try {
+        await generateExcelReport(today, filePath);
+        await ctx.replyWithDocument({ source: filePath }, { caption: `📊 <b>${today} holatiga Excel hisobot</b>`, parse_mode: 'HTML' });
+        if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    } catch (e) {
+        console.error(e);
+        ctx.reply("❌ Excel yaratishda xato yuz berdi.");
+    }
+});
+
+bot.hears("⚙️ Sozlamalar", (ctx) => isAdmin(ctx.from.id) && ctx.scene.enter('SETTINGS_SCENE'));
 
 bot.hears("📊 Kunlik hisobot (Bugun)", async (ctx) => {
     if (!isAdmin(ctx.from.id)) return;
@@ -326,11 +464,26 @@ bot.hears("🤒 Kasal bo'ldim", (ctx) => {
 });
 
 bot.hears("📊 Statistika", (ctx) => {
-    const today = moment().tz("Asia/Tashkent").format("YYYY-MM-DD");
-    const logs = db.logs.filter(l => l.uid == ctx.from.id && l.date === today);
-    let msg = `📊 <b>Bugungi holatingiz:</b>\n\n`;
-    logs.forEach(l => msg += `🔹 ${l.type.toUpperCase()}: ${l.time}\n`);
-    if (logs.length === 0) msg += "Hali ma'lumot yo'q.";
+    const now = moment().tz("Asia/Tashkent");
+    const today = now.format("YYYY-MM-DD");
+    const monthStart = now.startOf('month').format("YYYY-MM-DD");
+    
+    // Today
+    const todayLogs = db.logs.filter(l => l.uid == ctx.from.id && l.date === today);
+    // This month (crude count)
+    const monthLogs = db.logs.filter(l => l.uid == ctx.from.id && l.date >= monthStart);
+    const lates = monthLogs.filter(l => l.type === 'kirish' && l.time > WORK_START).length;
+    const presentDays = [...new Set(monthLogs.map(l => l.date))].length;
+
+    let msg = `📊 <b>Statistikangiz (${now.format("MMMM")}):</b>\n\n`;
+    msg += `📅 Bugungi holat:\n`;
+    todayLogs.forEach(l => msg += `🔹 ${l.type.toUpperCase()}: ${l.time}\n`);
+    if (todayLogs.length === 0) msg += "⚠️ Bugun hali qayd etilmagan.\n";
+
+    msg += `\n📑 Bu oydagi umumiy natija:\n`;
+    msg += `✅ Ishga kelgan kunlaringiz: <b>${presentDays} ta</b>\n`;
+    msg += `⚠️ Kechikishlar soni: <b>${lates} ta</b>\n`;
+    
     ctx.replyWithHTML(msg);
 });
 
@@ -346,6 +499,65 @@ function getDistance(lat1, lon1, lat2, lon2) {
     const dp = (lat2-lat1) * Math.PI / 180, dl = (lon2-lon1) * Math.PI / 180;
     const a = Math.sin(dp/2)**2 + Math.cos(p1)*Math.cos(p2)*Math.sin(dl/2)**2;
     return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+
+async function generateExcelReport(date, filePath) {
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet('Davomat');
+    
+    sheet.columns = [
+        { header: '№', key: 'id', width: 5 },
+        { header: 'Bo\'lim', key: 'dept', width: 25 },
+        { header: 'Ism-sharif', key: 'name', width: 35 },
+        { header: 'Holat', key: 'status', width: 20 },
+        { header: 'Kelgan vaqti', key: 'kirish', width: 15 },
+        { header: 'Ketgan vaqti', key: 'chiqish', width: 15 }
+    ];
+
+    const logs = db.logs.filter(l => l.date === date);
+    
+    STAFF_LIST.forEach((s, index) => {
+        const uid = Object.keys(db.users).find(u => db.users[u].staff_id === s.id);
+        const u = db.users[uid];
+        const v = (u && u.vacations) ? u.vacations.find(vac => {
+            const startStr = vac.start.split('-')[0].trim();
+            const endStr = vac.end.split('-')[0].trim();
+            return moment(date).isBetween(moment(startStr, "DD.MM.YYYY"), moment(endStr, "DD.MM.YYYY"), 'day', '[]');
+        }) : null;
+
+        let status = "❌ Kelmadi";
+        let kTime = "-";
+        let cTime = "-";
+
+        if (v) status = `🌴 ${v.type}`;
+        else {
+            const l = logs.find(log => String(log.uid) === String(uid) && log.type === 'kirish');
+            const o = logs.find(log => String(log.uid) === String(uid) && log.type === 'chiqish');
+            const sp = logs.find(log => String(log.uid) === String(uid) && log.type === 'special');
+            
+            if (sp) status = `📂 ${sp.status}`;
+            else if (l) {
+                status = l.time > WORK_START ? "⚠️ Kechikdi" : "✅ Vaqtida";
+                kTime = l.time;
+                if (o) cTime = o.time;
+            }
+        }
+
+        sheet.addRow({
+            id: index + 1,
+            dept: s.dept,
+            name: s.name,
+            status: status,
+            kirish: kTime,
+            chiqish: cTime
+        });
+    });
+
+    // Formatting
+    sheet.getRow(1).font = { bold: true };
+    sheet.getRow(1).alignment = { vertical: 'middle', horizontal: 'center' };
+    
+    await workbook.xlsx.writeFile(filePath);
 }
 
 async function generateReports(date) {
@@ -436,6 +648,22 @@ cron.schedule('0 7 * * *', async () => {
     const reports = await generateReports(yesterday);
     for (const msg of reports) {
         ADMINS.forEach(id => bot.telegram.sendMessage(id, `📑 <b>07:00 Kechagi hisobot:</b>\n\n` + msg, { parse_mode: 'HTML' }).catch(() => {}));
+    }
+}, { timezone: "Asia/Tashkent" });
+
+// Kechikayotganlarga eslatma yuborish (Item 3)
+cron.schedule('15 9 * * *', async () => {
+    const today = moment().tz("Asia/Tashkent").format("YYYY-MM-DD");
+    if (isHoliday(moment())) return;
+    
+    const logs = db.logs.filter(l => l.date === today && l.type === 'kirish');
+    
+    for (const cuid in db.users) {
+        const u = db.users[cuid];
+        const hasKirish = logs.find(l => String(l.uid) === String(cuid));
+        if (!hasKirish) {
+            bot.telegram.sendMessage(cuid, `⚠️ <b>Eslatma:</b> Bugun hali ishga kelganingizni qayd etmagansiz. Iltimos, hozirgi lokatsiyangizni yuboring!`, { parse_mode: 'HTML' }).catch(() => {});
+        }
     }
 }, { timezone: "Asia/Tashkent" });
 
