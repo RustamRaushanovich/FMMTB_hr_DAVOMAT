@@ -5,24 +5,46 @@ const cron = require('node-cron');
 const path = require('path');
 const http = require('http');
 
-// RENDER HEALTH CHECK SERVER
+// RENDER HEALTH CHECK & KEEP-ALIVE SERVER
 const PORT = process.env.PORT || 10000;
 const server = http.createServer((req, res) => {
-    res.writeHead(200, { 'Content-Type': 'text/plain' });
-    res.end('HR BOT IS ONLINE 24/7\n');
+    if (req.url === '/health' || req.url === '/') {
+        res.writeHead(200, { 'Content-Type': 'text/plain' });
+        res.end('HR BOT IS ONLINE 24/7\n');
+    } else {
+        res.writeHead(404);
+        res.end();
+    }
 });
 
 server.listen(PORT, '0.0.0.0', () => {
-    console.log(`Health check server is running on port ${PORT}`);
+    console.log(`🚀 Health check server is running on port ${PORT}`);
+    // Self-ping every 14 minutes to prevent Render from sleeping
+    setInterval(() => {
+        const url = process.env.RENDER_EXTERNAL_URL;
+        if (url) {
+            http.get(url, (res) => {
+                console.log(`🕒 Keep-alive ping sent to ${url}. Status: ${res.statusCode}`);
+            }).on('error', (err) => {
+                console.error('Keep-alive ping error:', err.message);
+            });
+        }
+    }, 14 * 60 * 1000); 
 });
 
-const TOKEN = '8754716546:AAHkFMWqdPf2qi0axCTa8XSkqWtVZzghhZM';
-const ADMINS = [65002404]; 
+const TOKEN = process.env.BOT_TOKEN || '8754716546:AAHkFMWqdPf2qi0axCTa8XSkqWtVZzghhZM';
+// Adminlar ro'yxati (ID'larni raqam va string ko'rinishida tekshirish uchun)
+const ADMINS = [65002404, 786314811, 5310405293]; 
 const bot = new Telegraf(TOKEN);
+
+// Adminlikni tekshirish uchun yordamchi funksiya
+const isAdmin = (id) => ADMINS.map(String).includes(String(id));
+
 
 const WORK_START = "09:00"; 
 const WORK_END = "18:00";   
 const LOGO_PATH = path.join(__dirname, 'logo.png');
+
 
 const DB_PATH = './db.json';
 const STAFF_LIST = [
@@ -108,6 +130,7 @@ function saveDb() { fs.writeFileSync(DB_PATH, JSON.stringify(db, null, 2)); }
 function isHoliday(date) {
     const d = date.format("DD.MM");
     const full = date.format("DD.MM.YYYY");
+    // 5-kunlik ish haftasi: Shanba (6) va Yakshanba (0) dam olish kunlari
     return FIXED_HOLIDAYS.includes(d) || db.settings.holidays.includes(full) || date.day() === 0 || date.day() === 6;
 }
 
@@ -195,6 +218,7 @@ const vacationWizard = new Scenes.WizardScene('VAC_SCENE',
     (ctx) => { ctx.wizard.state.start = ctx.message.text; ctx.replyWithHTML("📅 <b>Tugash sanasi (KK.OO.YYYY):</b>"); return ctx.wizard.next(); },
     (ctx) => {
         const user = db.users[ctx.from.id];
+        if (!user.vacations) user.vacations = [];
         user.vacations.push({ start: ctx.wizard.state.start, end: ctx.message.text, type: ctx.wizard.state.type });
         saveDb(); showMenu(ctx, false, `✅ <b>Ta'til qayd etildi!</b>`);
         return ctx.scene.leave();
@@ -202,9 +226,26 @@ const vacationWizard = new Scenes.WizardScene('VAC_SCENE',
 );
 
 const stage = new Scenes.Stage([registerWizard, vacationWizard, hududWizard, locationScene]);
-bot.use(session()); bot.use(stage.middleware());
+bot.use(session());
+bot.use(stage.middleware());
 
-bot.start((ctx) => { const u = db.users[ctx.from.id]; if (!u || !u.staff_id) return ctx.scene.enter('REG_SCENE'); showMenu(ctx); });
+// Global registration check middleware
+bot.use((ctx, next) => {
+    if (ctx.message && ctx.message.text === '/start') return next();
+    if (ctx.session && ctx.session.__scenes && ctx.session.__scenes.current) return next();
+    
+    const u = db.users[ctx.from.id];
+    if ((!u || !u.staff_id) && ctx.from.id !== bot.botInfo?.id) {
+        return ctx.scene.enter('REG_SCENE');
+    }
+    return next();
+});
+
+bot.start((ctx) => { 
+    const u = db.users[ctx.from.id]; 
+    if (!u || !u.staff_id) return ctx.scene.enter('REG_SCENE'); 
+    showMenu(ctx); 
+});
 
 async function showMenu(ctx, isExit = false, statusHeader = "") {
     const user = db.users[ctx.from.id]; if (!user) return; 
@@ -218,15 +259,56 @@ async function showMenu(ctx, isExit = false, statusHeader = "") {
     if (statusHeader) caption += `${statusHeader}\n\n`;
     if (isExit) { caption += `🏠 <b>Oila bag'riga omon boring, ${user.name}!</b>\n\n🗓 Bugun: <b>${dateStr} (${weekDay})</b>\n🕒 Vaqt: <b>${timeStr}</b>\n\n✨ <i>${randomMotto}</i>\n\nXayrli o'tsin! 👋`; }
     else { caption += `🏙 <b>Assalomu alaykum, ${user.name}!</b>\n\n🗓 Bugun: <b>${dateStr} (${weekDay})</b>\n🕒 Vaqt: <b>${timeStr}</b>\n\n✨ <i>${randomMotto}</i>\n\nHozirni qayd eting: 👇`; }
-    const menuMarkup = Markup.keyboard([["📍 KELDIM (Kirish)", "🚪 KETDIM (Chiqish)"],["✈️ Hizmat safari", "📂 Hududlarda"],["📝 Boshliq topshirig'i", "🤒 Kasal bo'ldim"],["🌴 Ta'til / O'z hisobi", "📊 Statistika"]]).resize();
+    let keyboard = [
+        ["📍 KELDIM (Kirish)", "🚪 KETDIM (Chiqish)"],
+        ["✈️ Hizmat safari", "📂 Hududlarda"],
+        ["📝 Boshliq topshirig'i", "🤒 Kasal bo'ldim"],
+        ["🌴 Ta'til / O'z hisobi", "📊 Statistika"]
+    ];
+
+    if (isAdmin(ctx.from.id)) {
+        keyboard.push(["⚙️ Admin Panel"]);
+    }
+
+    const menuMarkup = Markup.keyboard(keyboard).resize();
     try {
         if (fs.existsSync(LOGO_PATH)) { await ctx.replyWithPhoto({ source: LOGO_PATH }, { caption, parse_mode: 'HTML', ...menuMarkup }); }
         else { ctx.replyWithHTML(caption, menuMarkup); }
     } catch (e) { ctx.replyWithHTML(caption, menuMarkup); }
 }
 
+bot.hears("⚙️ Admin Panel", (ctx) => {
+    if (!isAdmin(ctx.from.id)) return;
+    ctx.replyWithHTML("👑 <b>Admin Panel</b>\n\nQuyidagi amallardan birini tanlang:", 
+        Markup.keyboard([["📊 Kunlik hisobot (Bugun)", "📑 Kechagi hisobot"], ["🏠 Bosh menyu"]]).resize());
+});
+
+bot.hears("📊 Kunlik hisobot (Bugun)", async (ctx) => {
+    if (!isAdmin(ctx.from.id)) return;
+    const today = moment().tz("Asia/Tashkent").format("YYYY-MM-DD");
+    const reports = await generateReports(today);
+    for (const msg of reports) {
+        ctx.replyWithHTML(msg).catch(() => {});
+    }
+});
+
+bot.hears("📑 Kechagi hisobot", async (ctx) => {
+    if (!isAdmin(ctx.from.id)) return;
+    const yesterday = moment().tz("Asia/Tashkent").subtract(1, 'day').format("YYYY-MM-DD");
+    const reports = await generateReports(yesterday);
+    for (const msg of reports) {
+        ctx.replyWithHTML(msg).catch(() => {});
+    }
+});
+
+bot.hears("🏠 Bosh menyu", (ctx) => showMenu(ctx));
+
+
 bot.hears("📍 KELDIM (Kirish)", (ctx) => { ctx.session.pendingType = 'kirish'; ctx.scene.enter('LOC_SCENE'); });
 bot.hears("🚪 KETDIM (Chiqish)", (ctx) => { ctx.session.pendingType = 'chiqish'; ctx.scene.enter('LOC_SCENE'); });
+bot.hears("📂 Hududlarda", (ctx) => ctx.scene.enter('HUDUD_SCENE'));
+bot.hears("🌴 Ta'til / O'z hisobi", (ctx) => ctx.scene.enter('VAC_SCENE'));
+
 bot.hears("✈️ Hizmat safari", (ctx) => {
     const now = moment().tz("Asia/Tashkent");
     db.logs.push({ uid: ctx.from.id, type: 'special', status: 'Hizmat safari', date: now.format("YYYY-MM-DD"), time: now.format("HH:mm:ss") });
@@ -266,50 +348,95 @@ function getDistance(lat1, lon1, lat2, lon2) {
     return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
 }
 
-async function generateReport(date) {
+async function generateReports(date) {
     const logs = db.logs.filter(l => l.date === date);
-    let msg = `📊 <b>Hisobot (${date}):</b>\n\n`;
-    STAFF_LIST.forEach(s => {
-        const uid = Object.keys(db.users).find(u => db.users[u].staff_id === s.id);
-        const u = db.users[uid];
-        const v = u ? u.vacations.find(vac => moment(date).isBetween(moment(vac.start, "DD.MM.YYYY"), moment(vac.end, "DD.MM.YYYY"), 'day', '[]')) : null;
-        if (v) msg += `🌴 <b>${s.name}</b>: ${v.type}\n`;
-        else {
-            const l = logs.find(log => log.uid == uid && log.type === 'kirish');
-            const o = logs.find(log => log.uid == uid && log.type === 'chiqish');
-            const sp = logs.find(log => log.uid == uid && log.type === 'special');
-            if (sp) msg += `📂 <b>${s.name}</b>: ${sp.status}\n`;
-            else if (l) {
-                const isLate = l.time > WORK_START;
-                const status = isLate ? "⚠️ Kechikdi" : "✅ Vaqtida";
-                msg += `👤 <b>${s.name}</b>: ${status} (${l.time})\n`;
-                if (o) msg += `   ⤷ 🚪 Ketdi: ${o.time} ${o.time < WORK_END ? '🔴 (Erta)' : ''}\n`;
-                else msg += `   ⤷ 🏢 Hozir ishda (Ketmagan)\n`;
+    const depts = [...new Set(STAFF_LIST.map(s => s.dept))];
+    const reportParts = [];
+
+    // Overall summary statistics
+    let totalPresent = 0;
+    let totalAbsent = 0;
+    let totalVacation = 0;
+    let totalSpecial = 0;
+    let totalStaff = STAFF_LIST.length;
+
+    for (const dept of depts) {
+        let msg = `🏢 <b>${dept} bo'limi:</b>\n\n`;
+        const deptStaff = STAFF_LIST.filter(s => s.dept === dept);
+        
+        deptStaff.forEach(s => {
+            const uidString = Object.keys(db.users).find(u => db.users[u].staff_id === s.id);
+            const uid = uidString ? Number(uidString) : null;
+            const u = db.users[uidString];
+            const v = (u && u.vacations) ? u.vacations.find(vac => {
+                const startStr = vac.start.split('-')[0].trim();
+                const endStr = vac.end.split('-')[0].trim();
+                return moment(date).isBetween(moment(startStr, "DD.MM.YYYY"), moment(endStr, "DD.MM.YYYY"), 'day', '[]');
+            }) : null;
+
+            if (v) {
+                msg += `🌴 <b>${s.name}</b>: ${v.type}\n`;
+                totalVacation++;
+            } else {
+                const l = logs.find(log => log.uid == uid && log.type === 'kirish');
+                const o = logs.find(log => log.uid == uid && log.type === 'chiqish');
+                const sp = logs.find(log => log.uid == uid && log.type === 'special');
+                if (sp) {
+                    msg += `📂 <b>${s.name}</b>: ${sp.status}\n`;
+                    totalSpecial++;
+                } else if (l) {
+                    const status = l.time > WORK_START ? "⚠️ Kechikdi" : "✅ Vaqtida";
+                    msg += `👤 <b>${s.name}</b>: ${status} (${l.time})\n`;
+                    if (o) msg += `   ⤷ 🚪 Ketdi: ${o.time} ${o.time < WORK_END ? '🔴 (Erta)' : ''}\n`;
+                    else msg += `   ⤷ 🏢 Hozir ishda\n`;
+                    totalPresent++;
+                } else {
+                    msg += `❌ <b>${s.name}</b>: Kelmadi\n`;
+                    totalAbsent++;
+                }
             }
-            else msg += `❌ <b>${s.name}</b>: Kelmadi\n`;
-        }
-    });
-    return msg;
+        });
+        reportParts.push(msg);
+    }
+
+    const summaryHeader = `📊 <b>KUNLIK HISOBOT (${date})</b>\n\n` +
+        `👥 Jami xodimlar: <b>${totalStaff}</b>\n` +
+        `✅ Ishda: <b>${totalPresent}</b>\n` +
+        `❌ Kelmagan: <b>${totalAbsent}</b>\n` +
+        `🌴 Ta'tilda: <b>${totalVacation}</b>\n` +
+        `📂 Maxsus (Safari/Kasal): <b>${totalSpecial}</b>\n\n` +
+        `--------------------------\n\n`;
+
+    // Prepend summary to the first part
+    if (reportParts.length > 0) reportParts[0] = summaryHeader + reportParts[0];
+
+    return reportParts;
 }
 
 cron.schedule('0 10 * * *', async () => {
     const today = moment().tz("Asia/Tashkent").format("YYYY-MM-DD");
     if (isHoliday(moment())) return;
-    const msg = `⏰ <b>10:00 - Ertalabki monitoring:</b>\n\n` + await generateReport(today);
-    ADMINS.forEach(id => bot.telegram.sendMessage(id, msg, { parse_mode: 'HTML' }).catch(() => {}));
+    const reports = await generateReports(today);
+    for (const msg of reports) {
+        ADMINS.forEach(id => bot.telegram.sendMessage(id, `⏰ <b>10:00 Monitoring:</b>\n\n` + msg, { parse_mode: 'HTML' }).catch(() => {}));
+    }
 }, { timezone: "Asia/Tashkent" });
 
 cron.schedule('0 20 * * *', async () => {
     const today = moment().tz("Asia/Tashkent").format("YYYY-MM-DD");
     if (isHoliday(moment())) return;
-    const msg = `🌙 <b>20:00 - Kunlik yakuniy holat:</b>\n\n` + await generateReport(today);
-    ADMINS.forEach(id => bot.telegram.sendMessage(id, msg, { parse_mode: 'HTML' }).catch(() => {}));
+    const reports = await generateReports(today);
+    for (const msg of reports) {
+        ADMINS.forEach(id => bot.telegram.sendMessage(id, `🌙 <b>20:00 Yakuniy:</b>\n\n` + msg, { parse_mode: 'HTML' }).catch(() => {}));
+    }
 }, { timezone: "Asia/Tashkent" });
 
 cron.schedule('0 7 * * *', async () => {
     const yesterday = moment().tz("Asia/Tashkent").subtract(1, 'day').format("YYYY-MM-DD");
-    const msg = `📑 <b>07:00 - Kechagi kun uchun umumiy hisobot:</b>\n\n` + await generateReport(yesterday);
-    ADMINS.forEach(id => bot.telegram.sendMessage(id, msg, { parse_mode: 'HTML' }).catch(() => {}));
+    const reports = await generateReports(yesterday);
+    for (const msg of reports) {
+        ADMINS.forEach(id => bot.telegram.sendMessage(id, `📑 <b>07:00 Kechagi hisobot:</b>\n\n` + msg, { parse_mode: 'HTML' }).catch(() => {}));
+    }
 }, { timezone: "Asia/Tashkent" });
 
 bot.launch({ dropPendingUpdates: true })
