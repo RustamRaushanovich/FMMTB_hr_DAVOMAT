@@ -397,6 +397,9 @@ bot.use((ctx, next) => {
     if (ctx.session && ctx.session.__scenes && ctx.session.__scenes.current) return next();
     
     const u = db.users[ctx.from.id];
+    // Agar admin bo'lsa, ro'yxatdan o'tish shart emas
+    if (isAdmin(ctx.from.id)) return next();
+    
     if ((!u || !u.staff_id) && ctx.from.id !== bot.botInfo?.id) {
         return ctx.scene.enter('REG_SCENE');
     }
@@ -624,15 +627,24 @@ async function generateExcelReport(date, filePath) {
 
 async function generateReports(date) {
     const logs = db.logs.filter(l => l.date === date);
-    const depts = [...new Set(STAFF_LIST.map(s => s.dept))];
     const reportParts = [];
 
     // Overall summary statistics
-    let totalPresent = 0;
-    let totalAbsent = 0;
-    let totalVacation = 0;
-    let totalSpecial = 0;
-    let totalStaff = STAFF_LIST.length;
+    let counts = {
+        onTime: 0,
+        late: 0,
+        absent: 0,
+        vacation: 0,
+        sick: 0,
+        hizmat: 0,
+        bossTask: 0,
+        appeals: 0,
+        curator: 0,
+        study: 0,
+        total: STAFF_LIST.length
+    };
+
+    const depts = [...new Set(STAFF_LIST.map(s => s.dept))];
 
     for (const dept of depts) {
         let msg = `🏢 <b>${dept} bo'limi:</b>\n\n`;
@@ -650,35 +662,53 @@ async function generateReports(date) {
 
             if (v) {
                 msg += `🌴 <b>${s.name}</b>: ${v.type}\n`;
-                totalVacation++;
+                counts.vacation++;
             } else {
                 const l = logs.find(log => String(log.uid) === String(uid) && log.type === 'kirish');
                 const o = logs.find(log => String(log.uid) === String(uid) && log.type === 'chiqish');
                 const sp = logs.find(log => String(log.uid) === String(uid) && log.type === 'special');
+                
                 if (sp) {
                     msg += `📂 <b>${s.name}</b>: ${sp.status}\n`;
-                    totalSpecial++;
+                    if (sp.status.includes('Topshiriq')) counts.bossTask++;
+                    else if (sp.status.includes('Fuqaro')) counts.appeals++;
+                    else if (sp.status.includes('Kurator')) counts.curator++;
+                    else if (sp.status.includes('O\'rganish')) counts.study++;
+                    else if (sp.status === 'Betob') counts.sick++;
+                    else if (sp.status === 'Hizmat safari') counts.hizmat++;
+                    else counts.bossTask++; // Default to boss task
                 } else if (l) {
-                    const status = l.time > WORK_START ? "⚠️ Kechikdi" : "✅ Vaqtida";
+                    const isLate = l.time > WORK_START;
+                    if (isLate) counts.late++; else counts.onTime++;
+                    
+                    const status = isLate ? "⚠️ Kechikdi" : "✅ Vaqtida";
                     msg += `👤 <b>${s.name}</b>: ${status} (${l.time})\n`;
                     if (o) msg += `   ⤷ 🚪 Ketdi: ${o.time} ${o.time < WORK_END ? '🔴 (Erta)' : ''}\n`;
                     else msg += `   ⤷ 🏢 Hozir ishda\n`;
-                    totalPresent++;
                 } else {
                     msg += `❌ <b>${s.name}</b>: Kelmadi\n`;
-                    totalAbsent++;
+                    counts.absent++;
                 }
             }
         });
         reportParts.push(msg);
     }
 
-    const summaryHeader = `📊 <b>KUNLIK HISOBOT (${date})</b>\n\n` +
-        `👥 Jami xodimlar: <b>${totalStaff}</b>\n` +
-        `✅ Ishda: <b>${totalPresent}</b>\n` +
-        `❌ Kelmagan: <b>${totalAbsent}</b>\n` +
-        `🌴 Ta'tilda: <b>${totalVacation}</b>\n` +
-        `📂 Maxsus (Safari/Kasal): <b>${totalSpecial}</b>\n\n` +
+    const summaryHeader = `📊 <b>KUNLIK HISOBOT SVODI (${date})</b>\n\n` +
+        `✅ Ish vaqtida kelganlar: <b>${counts.onTime} nafar</b>\n` +
+        `⚠️ Kechikkanlar: <b>${counts.late} nafar</b>\n` +
+        `🤒 Kasallar: <b>${counts.sick} nafar</b>\n` +
+        `--------------------------\n` +
+        `📂 <b>Hududlarda:</b>\n` +
+        `- 👥 Fuqaro murojaatida: <b>${counts.appeals} nafar</b>\n` +
+        `- 🏢 Kuratorlik hududida: <b>${counts.curator} nafar</b>\n` +
+        `- 🏫 O'rganishda: <b>${counts.study} nafar</b>\n` +
+        `--------------------------\n` +
+        `- 📝 Boshliq topshirig'i: <b>${counts.bossTask} nafar</b>\n` +
+        `- ✈️ Hizmat safari: <b>${counts.hizmat} nafar</b>\n` +
+        `- 🌴 Ta'tilda: <b>${counts.vacation} nafar</b>\n` +
+        `❌ Kelmaganlar: <b>${counts.absent} nafar</b>\n\n` +
+        `👥 Jami xodimlar: <b>${counts.total} nafar</b>\n\n` +
         `--------------------------\n\n`;
 
     // Prepend summary to the first part
