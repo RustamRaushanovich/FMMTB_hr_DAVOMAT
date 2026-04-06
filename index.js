@@ -256,12 +256,20 @@ const vacationWizard = new Scenes.WizardScene('VAC_SCENE',
         ctx.wizard.state.type = ctx.message.text;
         ctx.replyWithHTML("📅 <b>Boshlanish sanasi (KK.OO.YYYY):</b>"); return ctx.wizard.next();
     },
-    (ctx) => { ctx.wizard.state.start = ctx.message.text; ctx.replyWithHTML("📅 <b>Tugash sanasi (KK.OO.YYYY):</b>"); return ctx.wizard.next(); },
+    (ctx) => { ctx.wizard.state.start = ctx.message.text; ctx.replyWithHTML("📅 <b>Tugash sanasi (KK.OO.YYYY):</b>"); return ctx.wizard.next();    },
     (ctx) => {
         const user = db.users[ctx.from.id];
         if (!user.vacations) user.vacations = [];
         user.vacations.push({ start: ctx.wizard.state.start, end: ctx.message.text, type: ctx.wizard.state.type });
-        saveDb(); showMenu(ctx, false, `✅ <b>Ta'til qayd etildi!</b>`);
+        saveDb(); 
+        
+        showMenu(ctx, false, `✅ <b>Ta'til qayd etildi!</b>\n\nSiz <b>${ctx.wizard.state.start}</b> dan <b>${ctx.message.text}</b> gacha <b>${ctx.wizard.state.type}</b>da ekansiz.`);
+        
+        // Adminga bildirishnoma
+        ADMINS.forEach(id => {
+            bot.telegram.sendMessage(id, `🌴 <b>TA'TIL QAYDI:</b>\n\n👤 <b>Xodim:</b> ${user.name}\n📝 <b>Turi:</b> ${ctx.wizard.state.type}\n📅 <b>Muddati:</b> ${ctx.wizard.state.start} - ${ctx.message.text}`, { parse_mode: 'HTML' }).catch(() => {});
+        });
+        
         return ctx.scene.leave();
     }
 );
@@ -344,7 +352,42 @@ const adminSearchWizard = new Scenes.WizardScene('ADMIN_SEARCH_SCENE',
     }
 );
 
-const stage = new Scenes.Stage([registerWizard, vacationWizard, hududWizard, locationScene, settingsWizard, adminSearchWizard]);
+// Surprise Nazorat Sahnasi (Item 2)
+const surpriseScene = new Scenes.WizardScene('SURPRISE_SCENE',
+    (ctx) => {
+        ctx.replyWithHTML("‼️ <b>NAZORAT TEKSHIRUVI!</b>\n\nIltimos, hozirgi joylashuvingizni tasdiqlash uchun pastdagi tugmani bosing.", 
+            Markup.keyboard([[Markup.button.locationRequest("📍 Hozirgi joyimni tasdiqlash")]]).resize());
+        return ctx.wizard.next();
+    },
+    async (ctx) => {
+        if (!ctx.message.location) return ctx.reply("Iltimos, faqat tugmani bosing!");
+        const now = moment().tz("Asia/Tashkent");
+        const dist = getDistance(ctx.message.location.latitude, ctx.message.location.longitude, db.settings.lat, db.settings.lon);
+        const user = db.users[ctx.from.id];
+        const mapUrl = `https://www.google.com/maps?q=${ctx.message.location.latitude},${ctx.message.location.longitude}`;
+
+        // Log saqlash
+        db.logs.push({ 
+            uid: ctx.from.id, type: 'nazorat', status: dist <= db.settings.radius ? '✅ Ishxonada' : '⚠️ Ishxonada emas', 
+            date: now.format("YYYY-MM-DD"), time: now.format("HH:mm:ss"),
+            lat: ctx.message.location.latitude, lon: ctx.message.location.longitude
+        });
+        saveDb();
+
+        const statusLabel = dist <= db.settings.radius ? "✅ Ishxonada" : "⚠️ Ishxonada EMAS";
+        ctx.replyWithHTML(`✅ <b>Tasdiqlandi!</b>\n\nSizning hozirgi holatingiz: <b>${statusLabel}</b>\n\nRahmat!`, Markup.removeKeyboard());
+        
+        // Adminga darhol xabar yuborish
+        ADMINS.forEach(id => {
+            bot.telegram.sendMessage(id, `🔔 <b>NAZORAT NATIJASI:</b>\n\n👤 <b>Xodim:</b> ${user.name}\n📍 <b>Holati:</b> ${statusLabel}\n🕒 <b>Vaqt:</b> ${now.format("HH:mm")}\n🔗 <a href="${mapUrl}">Kartada ko'rish</a>`, { parse_mode: 'HTML' }).catch(() => {});
+        });
+
+        setTimeout(() => showMenu(ctx), 2000);
+        return ctx.scene.leave();
+    }
+);
+
+const stage = new Scenes.Stage([registerWizard, vacationWizard, hududWizard, locationScene, settingsWizard, adminSearchWizard, surpriseScene]);
 bot.use(session());
 bot.use(stage.middleware());
 
@@ -448,19 +491,38 @@ bot.hears("📂 Hududlarda", (ctx) => ctx.scene.enter('HUDUD_SCENE'));
 bot.hears("🌴 Ta'til / O'z hisobi", (ctx) => ctx.scene.enter('VAC_SCENE'));
 
 bot.hears("✈️ Hizmat safari", (ctx) => {
+    const user = db.users[ctx.from.id];
     const now = moment().tz("Asia/Tashkent");
     db.logs.push({ uid: ctx.from.id, type: 'special', status: 'Hizmat safari', date: now.format("YYYY-MM-DD"), time: now.format("HH:mm:ss") });
-    saveDb(); showMenu(ctx, false, `✈️ <b>Hizmat safari qayd etildi!</b>`);
+    saveDb();
+    showMenu(ctx, false, `✈️ <b>Hizmat safari qayd etildi!</b>`);
+    
+    // Adminga xabar
+    ADMINS.forEach(id => bot.telegram.sendMessage(id, `✈️ <b>HIZMAT SAFARI:</b>\n\n👤 <b>Xodim:</b> ${user.name}\n🕒 <b>Vaqt:</b> ${now.format("HH:mm")}`).catch(() => {}));
 });
+
 bot.hears("📝 Boshliq topshirig'i", (ctx) => {
+    const user = db.users[ctx.from.id];
     const now = moment().tz("Asia/Tashkent");
     db.logs.push({ uid: ctx.from.id, type: 'special', status: 'Topshiriq', date: now.format("YYYY-MM-DD"), time: now.format("HH:mm:ss") });
-    saveDb(); showMenu(ctx, false, `📝 <b>Boshliq topshirig'i qayd etildi!</b>`);
+    saveDb();
+    showMenu(ctx, false, `📝 <b>Boshluq topshirig'i qayd etildi!</b>`);
+    
+    // Adminga xabar
+    ADMINS.forEach(id => bot.telegram.sendMessage(id, `📝 <b>TOPSHIRIQ:</b>\n\n👤 <b>Xodim:</b> ${user.name}\n🕒 <b>Vaqt:</b> ${now.format("HH:mm")}`).catch(() => {}));
 });
+
 bot.hears("🤒 Kasal bo'ldim", (ctx) => {
+    const user = db.users[ctx.from.id];
     const now = moment().tz("Asia/Tashkent");
     db.logs.push({ uid: ctx.from.id, type: 'special', status: 'Betob', date: now.format("YYYY-MM-DD"), time: now.format("HH:mm:ss") });
-    saveDb(); showMenu(ctx, false, `🤒 <b>Shifo tilaymiz! Betoblik qayd etildi.</b>`);
+    saveDb();
+    
+    // Xodimga javob
+    showMenu(ctx, false, `🤲 <b>Alloh shifo bersin!</b>\n\nTezroq sog'ayib ketishingizni tilaymiz. Sizning xabaringiz rahbarlarga yetkazildi.`);
+    
+    // Adminga xabar
+    ADMINS.forEach(id => bot.telegram.sendMessage(id, `🤒 <b>BETOBLIK QAYDI:</b>\n\n👤 <b>Xodim:</b> ${user.name}\n🕒 <b>Vaqt:</b> ${now.format("HH:mm")}`).catch(() => {}));
 });
 
 bot.hears("📊 Statistika", (ctx) => {
@@ -590,9 +652,9 @@ async function generateReports(date) {
                 msg += `🌴 <b>${s.name}</b>: ${v.type}\n`;
                 totalVacation++;
             } else {
-                const l = logs.find(log => log.uid == uid && log.type === 'kirish');
-                const o = logs.find(log => log.uid == uid && log.type === 'chiqish');
-                const sp = logs.find(log => log.uid == uid && log.type === 'special');
+                const l = logs.find(log => String(log.uid) === String(uid) && log.type === 'kirish');
+                const o = logs.find(log => String(log.uid) === String(uid) && log.type === 'chiqish');
+                const sp = logs.find(log => String(log.uid) === String(uid) && log.type === 'special');
                 if (sp) {
                     msg += `📂 <b>${s.name}</b>: ${sp.status}\n`;
                     totalSpecial++;
@@ -666,6 +728,25 @@ cron.schedule('15 9 * * *', async () => {
         }
     }
 }, { timezone: "Asia/Tashkent" });
+
+// Avtomatik kutilmagan nazorat (Har kuni 11:15 va 15:45 da)
+cron.schedule('15 11 * * *', async () => {
+    if (isHoliday(moment())) return;
+    for (const cuid in db.users) {
+        bot.telegram.sendMessage(cuid, "‼️ <b>NAZORAT TEKSHIRUVI!</b>\n\nIltimos, hozirgi turgan joyingizni tasdiqlang. (Botga kirib 'Hozirgi joyimni tasdiqlash'ni bosing)", { parse_mode: 'HTML' }).catch(() => {});
+        // Sahnaga majburiy kirgizish imkoni yo'q, shuning uchun xabar yuboramiz. 
+        // Botga birinchi bo'lib yozsa, REG yoki MENU o'rniga SURPRISE boshlanadi
+    }
+}, { timezone: "Asia/Tashkent" });
+
+cron.schedule('45 15 * * *', async () => {
+    if (isHoliday(moment())) return;
+    for (const cuid in db.users) {
+        bot.telegram.sendMessage(cuid, "‼️ <b>NAZORAT TEKSHIRUVI!</b>\n\nIltimos, hozirgi turgan joyingizni tasdiqlang.", { parse_mode: 'HTML' }).catch(() => {});
+    }
+}, { timezone: "Asia/Tashkent" });
+
+bot.hears("📍 Hozirgi joyimni tasdiqlash", (ctx) => ctx.scene.enter('SURPRISE_SCENE'));
 
 bot.launch({ dropPendingUpdates: true })
     .then(() => console.log("HR BOT IS ONLINE ON RENDER"))
